@@ -23,18 +23,18 @@ DENSITY_INCREMENT ?= 1
 RESULTS_DIR ?= $(shell pwd)/benchmark
 
 REGISTRY ?= true
-TAG ?= rc2
-
-MODELDOWNLOADER_IMAGE ?= model-downloader-oa:1.2.2
-PIPELINERUNNER_IMAGE ?= pipeline-runner-oa:1.2.2
-QSR_VIDEO_DOWNLOADER_IMAGE ?= qsr-video-downloader-oa:1.2.2
-QSR_VIDEO_COMPRESSOR_IMAGE ?= qsr-video-compressor-oa:1.2.2
+OA_TAG = $(shell cat VERSION)
+PT_TAG = $(shell cat performance-tools/VERSION)
+MODELDOWNLOADER_IMAGE ?= model-downloader-oa:$(OA_TAG)
+PIPELINERUNNER_IMAGE ?= pipeline-runner-oa:$(OA_TAG)
+QSR_VIDEO_DOWNLOADER_IMAGE ?= qsr-video-downloader-oa:$(OA_TAG)
+QSR_VIDEO_COMPRESSOR_IMAGE ?= qsr-video-compressor-oa:$(OA_TAG)
 # Registry image references
-REGISTRY_MODEL_DOWNLOADER_IMAGE ?= intel/model-downloader-oa:1.2.2
-REGISTRY_PIPELINE_RUNNER_IMAGE ?= intel/pipeline-runner-oa:1.2.2
-REGISTRY_QSR_VIDEO_DOWNLOADER_IMAGE ?= intel/qsr-video-downloader-oa:1.2.2
-REGISTRY_QSR_VIDEO_COMPRESSOR_IMAGE ?= intel/qsr-video-compressor-oa:1.2.2
-REGISTRY_BENCHMARK ?= intel/retail-benchmark:3.3.1
+REGISTRY_MODEL_DOWNLOADER_IMAGE ?= intel/model-downloader-oa:$(OA_TAG)
+REGISTRY_PIPELINE_RUNNER_IMAGE ?= intel/pipeline-runner-oa:$(OA_TAG)
+REGISTRY_QSR_VIDEO_DOWNLOADER_IMAGE ?= intel/qsr-video-downloader-oa:$(OA_TAG)
+REGISTRY_QSR_VIDEO_COMPRESSOR_IMAGE ?= intel/qsr-video-compressor-oa:$(OA_TAG)
+REGISTRY_BENCHMARK ?= intel/retail-benchmark:$(PT_TAG)
 
 download-models: check-models-needed
 
@@ -56,7 +56,7 @@ build-download-models:
 		docker tag $(REGISTRY_MODEL_DOWNLOADER_IMAGE) $(MODELDOWNLOADER_IMAGE); \
 	else \
         echo "Building modeldownloader image locally..."; \
-        docker build --build-arg HTTPS_PROXY=${HTTPS_PROXY} --build-arg HTTP_PROXY=${HTTP_PROXY} -t $(MODELDOWNLOADER_IMAGE) -f docker/Dockerfile.downloader .; \
+        OA_TAG=$(OA_TAG) PT_TAG=$(PT_TAG) docker build --build-arg HTTPS_PROXY=${HTTPS_PROXY} --build-arg HTTP_PROXY=${HTTP_PROXY} -t $(MODELDOWNLOADER_IMAGE) -f docker/Dockerfile.downloader .; \
 	fi
 
 run-download-models:
@@ -91,7 +91,7 @@ run-smoke-tests: | download-models update-submodules download-sample-videos
 	@grep "===" ./smoke_tests_output.log || true
 
 update-submodules:
-	@git submodule update --init --recursive
+	#@git submodule update --init --recursive
 
 build: download-models update-submodules download-qsr-video download-sample-videos compress-qsr-video
 	@if [ "$(REGISTRY)" = "true" ]; then \
@@ -100,18 +100,18 @@ build: download-models update-submodules download-qsr-video download-sample-vide
 		docker tag $(REGISTRY_PIPELINE_RUNNER_IMAGE) $(PIPELINERUNNER_IMAGE); \
 	else \
 		echo "Building pipeline-runner-oa img locally..."; \
-		docker build --build-arg HTTPS_PROXY=${HTTPS_PROXY} --build-arg HTTP_PROXY=${HTTP_PROXY} -t $(PIPELINERUNNER_IMAGE) -f docker/Dockerfile.pipeline .; \
+		OA_TAG=$(OA_TAG) PT_TAG=$(PT_TAG) docker build --build-arg HTTPS_PROXY=${HTTPS_PROXY} --build-arg HTTP_PROXY=${HTTP_PROXY} -t $(PIPELINERUNNER_IMAGE) -f docker/Dockerfile.pipeline .; \
 	fi
 
 run:
 	@if [ "$(REGISTRY)" = "true" ]; then \
         echo "Running registry version..."; \
         echo "############### Running registry mode ###############################"; \
-        docker compose -f src/$(DOCKER_COMPOSE_REGISTRY) up -d; \
+        OA_TAG=$(OA_TAG) PT_TAG=$(PT_TAG) docker compose -f src/$(DOCKER_COMPOSE_REGISTRY) up -d; \
 	else \
         echo "Running standard version..."; \
         echo "############### Running STANDARD mode ###############################"; \
-        docker compose -f src/$(DOCKER_COMPOSE) up -d; \
+        OA_TAG=$(OA_TAG) PT_TAG=$(PT_TAG) docker compose -f src/$(DOCKER_COMPOSE) up -d; \
 	fi
 
 run-render-mode: download-qsr-video compress-qsr-video
@@ -126,25 +126,25 @@ run-render-mode: download-qsr-video compress-qsr-video
 	@xhost +local:docker
 	@if [ "$(REGISTRY)" = "true" ]; then \
         echo "Running registry version with render mode..."; \
-        RENDER_MODE=1 docker compose -f src/$(DOCKER_COMPOSE_REGISTRY) up -d; \
+        OA_TAG=$(OA_TAG) PT_TAG=$(PT_TAG)RENDER_MODE=1 docker compose -f src/$(DOCKER_COMPOSE_REGISTRY) up -d; \
 	else \
         echo "Running standard version with render mode..."; \
-		docker compose -f src/$(DOCKER_COMPOSE) build pipeline-runner; \
-        RENDER_MODE=1 docker compose -f src/$(DOCKER_COMPOSE) up -d; \
+		OA_TAG=$(OA_TAG) PT_TAG=$(PT_TAG) docker compose -f src/$(DOCKER_COMPOSE) build pipeline-runner; \
+        OA_TAG=$(OA_TAG) PT_TAG=$(PT_TAG) RENDER_MODE=1 docker compose -f src/$(DOCKER_COMPOSE) up -d; \
 	fi
 
 
 down:
 	@if [ "$(REGISTRY)" = "true" ]; then \
 		echo "Stopping registry demo containers..."; \
-		docker compose -f src/$(DOCKER_COMPOSE_REGISTRY) down; \
+		OA_TAG=$(OA_TAG) PT_TAG=$(PT_TAG) docker compose -f src/$(DOCKER_COMPOSE_REGISTRY) down; \
 		echo "Registry demo containers stopped and removed."; \
 	else \
-		docker compose -f src/$(DOCKER_COMPOSE) down; \
+		OA_TAG=$(OA_TAG) PT_TAG=$(PT_TAG) docker compose -f src/$(DOCKER_COMPOSE) down; \
 	fi
 
 down-sensors:
-	docker compose -f src/${DOCKER_COMPOSE_SENSORS} down
+	OA_TAG=$(OA_TAG) PT_TAG=$(PT_TAG) docker compose -f src/${DOCKER_COMPOSE_SENSORS} down
 
 download-qsr-video:
 	@if [ "$(REGISTRY)" = "true" ]; then \
@@ -156,7 +156,7 @@ download-qsr-video:
 			$(REGISTRY_QSR_VIDEO_DOWNLOADER_IMAGE); \
 	else \
 		echo "Building $(QSR_VIDEO_DOWNLOADER_IMAGE) img locally..."; \
-		docker build --build-arg HTTPS_PROXY=${HTTPS_PROXY} --build-arg HTTP_PROXY=${HTTP_PROXY} -t $(QSR_VIDEO_DOWNLOADER_IMAGE) -f docker/Dockerfile.qsrDownloader .; \
+		OA_TAG=$(OA_TAG) PT_TAG=$(PT_TAG) docker build --build-arg HTTPS_PROXY=${HTTPS_PROXY} --build-arg HTTP_PROXY=${HTTP_PROXY} -t $(QSR_VIDEO_DOWNLOADER_IMAGE) -f docker/Dockerfile.qsrDownloader .; \
 		echo "Downloading additional QSR videos..."; \
 		docker run --rm \
 			-v $(shell pwd)/config/sample-videos:/sample-videos \
@@ -173,7 +173,7 @@ compress-qsr-video:
 			$(REGISTRY_QSR_VIDEO_COMPRESSOR_IMAGE); \
 	else \
 		echo "Building $(QSR_VIDEO_COMPRESSOR_IMAGE) locally, Increasing the duration and Compressing the QSR video..."; \
-		docker build --build-arg HTTPS_PROXY=${HTTPS_PROXY} --build-arg HTTP_PROXY=${HTTP_PROXY} -t $(QSR_VIDEO_COMPRESSOR_IMAGE) -f docker/Dockerfile.videoDurationIncrease .; \
+		OA_TAG=$(OA_TAG) PT_TAG=$(PT_TAG) docker build --build-arg HTTPS_PROXY=${HTTPS_PROXY} --build-arg HTTP_PROXY=${HTTP_PROXY} -t $(QSR_VIDEO_COMPRESSOR_IMAGE) -f docker/Dockerfile.videoDurationIncrease .; \
 		docker run --rm \
 			-v $(shell pwd)/config/sample-videos:/sample-videos \
 			$(QSR_VIDEO_COMPRESSOR_IMAGE); \
@@ -209,8 +209,8 @@ build-benchmark:
 		$(MAKE) fetch-benchmark; \
 	else \
 		echo "Building pipeline-runner-oa img locally..."; \
-		docker build --build-arg HTTPS_PROXY=${HTTPS_PROXY} --build-arg HTTP_PROXY=${HTTP_PROXY} -t $(PIPELINERUNNER_IMAGE) -f docker/Dockerfile.pipeline .; \
-		cd performance-tools && $(MAKE) build-benchmark-docker; \
+		OA_TAG=$(OA_TAG) PT_TAG=$(PT_TAG) docker build --build-arg HTTPS_PROXY=${HTTPS_PROXY} --build-arg HTTP_PROXY=${HTTP_PROXY} -t $(PIPELINERUNNER_IMAGE) -f docker/Dockerfile.pipeline .; \
+		cd performance-tools && PT_TAG=$(PT_TAG) $(MAKE) build-benchmark-docker; \
 	fi
 
 benchmark: build-benchmark download-models download-sample-videos
@@ -219,9 +219,9 @@ benchmark: build-benchmark download-models download-sample-videos
 	. venv/bin/activate && \
 	pip install -r requirements.txt && \
 	if [ "$(REGISTRY)" = "true" ]; then \
-		python benchmark.py --compose_file ../../src/$(DOCKER_COMPOSE_REGISTRY) --pipeline $(PIPELINE_COUNT) --results_dir $(RESULTS_DIR) --benchmark_type reg; \
+		OA_TAG=$(OA_TAG) PT_TAG=$(PT_TAG) python benchmark.py --compose_file ../../src/$(DOCKER_COMPOSE_REGISTRY) --pipeline $(PIPELINE_COUNT) --results_dir $(RESULTS_DIR) --benchmark_type reg; \
 	else \
-		python benchmark.py --compose_file ../../src/$(DOCKER_COMPOSE) --pipeline $(PIPELINE_COUNT) --results_dir $(RESULTS_DIR); \
+		OA_TAG=$(OA_TAG) PT_TAG=$(PT_TAG) python benchmark.py --compose_file ../../src/$(DOCKER_COMPOSE) --pipeline $(PIPELINE_COUNT) --results_dir $(RESULTS_DIR); \
 	fi && \
 	deactivate
 
@@ -242,7 +242,7 @@ benchmark-stream-density: build-benchmark download-models
 	cd performance-tools/benchmark-scripts && \
 	pip3 install -r requirements.txt && \
 	if [ "$(REGISTRY)" = "true" ]; then \
-		python3 benchmark.py \
+		OA_TAG=$(OA_TAG) PT_TAG=$(PT_TAG) python3 benchmark.py \
 			--compose_file ../../src/$(DOCKER_COMPOSE_REGISTRY) \
 			--init_duration $(INIT_DURATION) \
 			--target_fps $(TARGET_FPS) \
@@ -251,7 +251,7 @@ benchmark-stream-density: build-benchmark download-models
 			--benchmark_type reg \
 			--results_dir $(RESULTS_DIR); \
 	else \
-		python3 benchmark.py \
+		OA_TAG=$(OA_TAG) PT_TAG=$(PT_TAG) python3 benchmark.py \
 			--compose_file ../../src/$(DOCKER_COMPOSE) \
 			--init_duration $(INIT_DURATION) \
 			--target_fps $(TARGET_FPS) \
@@ -262,7 +262,7 @@ benchmark-stream-density: build-benchmark download-models
 	deactivate
 
 benchmark-quickstart:
-	DEVICE_ENV=res/all-gpu.env RENDER_MODE=0 $(MAKE) benchmark
+	OA_TAG=$(OA_TAG) PT_TAG=$(PT_TAG) DEVICE_ENV=res/all-gpu.env RENDER_MODE=0 $(MAKE) benchmark
 	$(MAKE) consolidate-metrics
 
 clean-results:

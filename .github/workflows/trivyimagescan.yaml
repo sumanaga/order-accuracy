@@ -24,8 +24,16 @@ jobs:
     name: Build
     runs-on: ubuntu-24.04-4core-150GB
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Checkout code for Pull Request
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@1e31de5234b9f8995739874a8ce0492dc87873e2
+        with:
+            repository: ${{ github.event.pull_request.head.repo.full_name }}
+            ref: ${{ github.event.pull_request.head.ref }}
+
+      - name: Checkout code for Push Request
+        if: github.event_name == 'push'
+        uses: actions/checkout@1e31de5234b9f8995739874a8ce0492dc87873e2
         with:
             ref: main
 
@@ -34,10 +42,16 @@ jobs:
             echo "running make build benchmark"
             make build REGISTRY=false
             
+      - name: Extract OA_TAG value from VERSION file
+        id: extract_oa_tag
+        run: | 
+          OA_TAG=$(cat VERSION)
+          echo "OA_TAG=$OA_TAG" >> $GITHUB_OUTPUT
+
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@915b19bbe73b92a6cf82a1bc12b087c9a19a5fe2
         with:
-            image-ref: 'pipeline-runner-oa:1.2.2'
+            image-ref: 'pipeline-runner-oa:${{ steps.extract_oa_tag.outputs.OA_TAG }}'
             format: 'table'
             severity: 'CRITICAL,HIGH'
             output: 'trivy-oa-results.txt'
