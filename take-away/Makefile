@@ -311,7 +311,7 @@ help:
 # Build & Run
 # =============================================================================
 
-build: check-env
+build: check-env setup-dirs
 	@echo "$(BLUE)Building Take-Away Docker images...$(NC)"
 	@if [ "$(REGISTRY)" = "false" ] || [ "$(REGISTRY)" = "FALSE" ]; then \
 		echo "$(YELLOW)REGISTRY=false → Building images locally...$(NC)"; \
