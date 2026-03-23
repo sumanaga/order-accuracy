@@ -8,9 +8,11 @@ MODELS_DIR="${SCRIPT_DIR}/models"
 
 ###############################################
 # HARD CODED MODEL REGISTRY
+# key = model_name passed to --model_name (also used as path under MODELS_DIR)
+# value = HuggingFace source passed to --source_model
 ###############################################
 declare -A MODEL_SOURCES
-MODEL_SOURCES["Qwen2.5-VL-7B-Instruct-ov-int8"]="Qwen/Qwen2.5-VL-7B-Instruct"
+MODEL_SOURCES["Qwen/Qwen2.5-VL-7B-Instruct"]="Qwen/Qwen2.5-VL-7B-Instruct"
 
 POTENTIAL_SOURCE_DIRS=(
     "${HOME}/ovms-vlm/models"
@@ -28,6 +30,14 @@ fi
 # Fall back to the hard-coded source model if .env is missing or unset
 OVMS_MODEL_NAME_ENV="${OVMS_MODEL_NAME_ENV:-Qwen/Qwen2.5-VL-7B-Instruct}"
 
+# Read TARGET_DEVICE from take-away/.env (GPU or CPU); default GPU
+TARGET_DEVICE_ENV=$(grep -E '^TARGET_DEVICE=' "${ENV_FILE}" 2>/dev/null | head -1 | cut -d'=' -f2- | tr -d '"\r')
+TARGET_DEVICE_ENV="${TARGET_DEVICE_ENV:-GPU}"
+
+# Read VLM_PRECISION from take-away/.env (int8, int4, fp16, fp32); default int8
+VLM_PRECISION_ENV=$(grep -E '^VLM_PRECISION=' "${ENV_FILE}" 2>/dev/null | head -1 | cut -d'=' -f2- | tr -d '"\r')
+VLM_PRECISION_ENV="${VLM_PRECISION_ENV:-int8}"
+
 ###############################################
 echo "=========================================="
 echo "OVMS Model Setup for Order Accuracy"
@@ -42,20 +52,6 @@ check_model() {
     
     if [ ! -d "${model_path}" ]; then
         echo "  Directory not found"
-        
-        # Check alternative paths where export might have created the model
-        local alt_path1="${MODELS_DIR}/Qwen2.5-VL-7B-Instruct-ov-int8"
-        local alt_path2="${MODELS_DIR}/Qwen/Qwen2.5-VL-7B-Instruct"
-        
-        for alt_path in "${alt_path1}" "${alt_path2}"; do
-            if [ -d "${alt_path}" ]; then
-                echo "  Found model at alternative path: ${alt_path}"
-                echo "  Moving to expected path..."
-                mkdir -p "$(dirname "${model_path}")"
-                mv "${alt_path}" "${model_path}"
-                break
-            fi
-        done
         
         if [ ! -d "${model_path}" ]; then
             return 1
@@ -124,23 +120,26 @@ export_model() {
     local SOURCE_MODEL="$2"
 
     echo ""
-    echo "Exporting ${MODEL_NAME}"
+    echo "Exporting ${MODEL_NAME} (device: ${TARGET_DEVICE_ENV}, precision: ${VLM_PRECISION_ENV})"
     echo ""
 
-    # Create the Qwen subdirectory first
-    mkdir -p "${MODELS_DIR}/Qwen"
+    # Build optional --target_device argument; CPU is the default so omit it
+    local target_device_args=()
+    if [ "${TARGET_DEVICE_ENV}" != "CPU" ]; then
+        target_device_args=(--target_device "${TARGET_DEVICE_ENV}")
+    fi
 
     python "${SCRIPT_DIR}/export_model.py" text_generation \
       --source_model "${SOURCE_MODEL}" \
-      --weight-format int8 \
-      --pipeline_type VLM_CB \
-      --target_device GPU \
+      --weight-format "${VLM_PRECISION_ENV}" \
+      --pipeline_type VLM \
+      "${target_device_args[@]}" \
       --cache_size 32 \
       --max_num_seqs 4 \
       --max_num_batched_tokens 8192 \
       --enable_prefix_caching True \
       --config_file_path "${MODELS_DIR}/config.json" \
-      --model_repository_path "${MODELS_DIR}/Qwen" \
+      --model_repository_path "${MODELS_DIR}" \
       --model_name "${MODEL_NAME}"
 }
 
@@ -166,7 +165,7 @@ ensure_python_env() {
 for MODEL_NAME in "${!MODEL_SOURCES[@]}"; do
 
     SOURCE_MODEL="${MODEL_SOURCES[$MODEL_NAME]}"
-    TARGET_PATH="${MODELS_DIR}/Qwen/${MODEL_NAME}"
+    TARGET_PATH="${MODELS_DIR}/${MODEL_NAME}"
 
     echo ""
     echo "------------------------------------------"
@@ -190,13 +189,13 @@ for MODEL_NAME in "${!MODEL_SOURCES[@]}"; do
     # Check copy from external sources
     ###########################################
     for SOURCE_DIR in "${POTENTIAL_SOURCE_DIRS[@]}"; do
-        if [ -d "${SOURCE_DIR}/Qwen/${MODEL_NAME}" ]; then
+        if [ -d "${SOURCE_DIR}/${MODEL_NAME}" ]; then
 
-            if check_model "${SOURCE_DIR}/Qwen/${MODEL_NAME}"; then
+            if check_model "${SOURCE_DIR}/${MODEL_NAME}"; then
                 echo "Copying model from ${SOURCE_DIR}"
 
-                mkdir -p "${MODELS_DIR}/Qwen"
-                cp -r "${SOURCE_DIR}/Qwen/${MODEL_NAME}" "${MODELS_DIR}/Qwen/"
+                mkdir -p "$(dirname "${MODELS_DIR}/${MODEL_NAME}")"
+                cp -r "${SOURCE_DIR}/${MODEL_NAME}" "$(dirname "${MODELS_DIR}/${MODEL_NAME}")/"
 
                 echo "✓ Copied ${MODEL_NAME}"
                 continue 2
@@ -246,7 +245,7 @@ generate_ovms_config() {
     local first=1
 
     for MODEL_NAME in "${!MODEL_SOURCES[@]}"; do
-        local TARGET_PATH="${MODELS_DIR}/Qwen/${MODEL_NAME}"
+        local TARGET_PATH="${MODELS_DIR}/${MODEL_NAME}"
 
         if [ ! -d "${TARGET_PATH}" ]; then
             echo "  Skipping ${MODEL_NAME} (not found)"
@@ -259,10 +258,10 @@ generate_ovms_config() {
         config_entries+="
         {
             \"name\": \"${OVMS_MODEL_NAME_ENV}\",
-            \"base_path\": \"Qwen/${MODEL_NAME}\"
+            \"base_path\": \"${MODEL_NAME}\"
         }"
         first=0
-        echo "  + ${OVMS_MODEL_NAME_ENV}  →  Qwen/${MODEL_NAME}"
+        echo "  + ${OVMS_MODEL_NAME_ENV}  →  ${MODEL_NAME}"
     done
 
     cat > "${MODELS_DIR}/config.json" << EOF
