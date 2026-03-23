@@ -3,7 +3,7 @@
 # separate terms of service, privacy policy, and support
 # documentation.
 
-name: trivy
+name: trivy image scan
 
 on:
   push:
@@ -64,7 +64,8 @@ jobs:
       - name: Run Trivy take away vulnerability scanner
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
         with:
-            image-ref: "intel/intel/order-accuracy-take-away:${{ steps.take-away-vars.outputs.tag }}"
+            #image-ref: "intel/intel/order-accuracy-take-away:${{ steps.take-away-vars.outputs.tag }}"
+            image-ref: "intel/order-accuracy-take-away:2026.0-rc2"
             format: 'table'
             severity: 'CRITICAL,HIGH'
             output: 'trivy-oa-take-away-results.txt'
