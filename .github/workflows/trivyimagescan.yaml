@@ -46,10 +46,10 @@ jobs:
             image-ref: "intel/order-accuracy-dine-in:${{ steps.vars.outputs.tag }}"
             format: 'table'
             severity: 'CRITICAL,HIGH'
-            output: 'trivy-oa-results.txt'
+            output: 'trivy-oa-dine-in-results.txt'
 
       - name: Upload Trivy scan results to GitHub Security tab
         uses: actions/upload-artifact@v4
         with:
           name: trivy-order-accuracy-html-report
-          path: trivy-oa-results.txt
+          path: trivy-oa-dine-in-results.txt
