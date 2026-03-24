@@ -64,8 +64,8 @@ jobs:
       - name: Run Trivy take away vulnerability scanner
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
         with:
-            #image-ref: "intel/order-accuracy-take-away:${{ steps.take-away-vars.outputs.tag }}"
-            image-ref: "intel/order-accuracy-take-away:2026.0-rc2"
+            image-ref: "intel/order-accuracy-take-away:${{ steps.take-away-vars.outputs.tag }}"
+            #image-ref: "intel/order-accuracy-take-away:2026.0-rc2"
             format: 'table'
             severity: 'CRITICAL,HIGH'
             output: 'trivy-oa-take-away-results.txt'
@@ -73,8 +73,8 @@ jobs:
       - name: Run Trivy frame selector vulnerability scanner
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
         with:
-            #image-ref: "intel/order-accuracy-take-away:${{ steps.take-away-vars.outputs.tag }}"
-            image-ref: "intel/order-accuracy-frame-selector:2026.0-rc2"
+            image-ref: "intel/order-accuracy-take-away:${{ steps.take-away-vars.outputs.tag }}"
+            #image-ref: "intel/order-accuracy-frame-selector:2026.0-rc2"
             format: 'table'
             severity: 'CRITICAL,HIGH'
             output: 'trivy-oa-take-away-frame-selector-results.txt'
@@ -82,8 +82,8 @@ jobs:
       - name: Run Trivy gradio ui vulnerability scanner
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
         with:
-            #image-ref: "intel/order-accuracy-take-away-ui:${{ steps.take-away-vars.outputs.tag }}"
-            image-ref: "intel/order-accuracy-take-away-ui:2026.0-rc1"
+            image-ref: "intel/order-accuracy-take-away-ui:${{ steps.take-away-vars.outputs.tag }}"
+            #image-ref: "intel/order-accuracy-take-away-ui:2026.0-rc1"
             format: 'table'
             severity: 'CRITICAL,HIGH'
             output: 'trivy-oa-take-away-ui-results.txt'
@@ -91,8 +91,8 @@ jobs:
       - name: Run Trivy rtsp streamer vulnerability scanner
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
         with:
-            #image-ref: "intel/order-accuracy-take-away-rtsp:${{ steps.take-away-vars.outputs.tag }}"
-            image-ref: "intel/order-accuracy-take-away-rtsp:2026.0-rc1"
+            image-ref: "intel/order-accuracy-take-away-rtsp:${{ steps.take-away-vars.outputs.tag }}"
+            #image-ref: "intel/order-accuracy-take-away-rtsp:2026.0-rc1"
             format: 'table'
             severity: 'CRITICAL,HIGH'
             output: 'trivy-oa-take-away-rtsp-streamer-results.txt'
