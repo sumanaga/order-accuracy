@@ -288,10 +288,10 @@ cd take-away
 make init-env               # Create .env from template
 make build                  # Build Docker images
 make up                     # Start (single mode)
-make up-parallel WORKERS=4  # Start (parallel mode)
 make down                   # Stop services
 make logs                   # View logs
 make update-submodules      # Initialize performance-tools (required before benchmarking)
+make download-sample-video  # Download sample video
 make benchmark              # Run Order Accuracy benchmark
 make benchmark-stream-density  # Stream density test (latency-based)
 make consolidate-metrics    # Consolidate benchmark metrics to CSV
