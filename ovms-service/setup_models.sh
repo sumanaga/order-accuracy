@@ -61,16 +61,13 @@ check_model() {
     echo "  Contents of ${model_path}:"
     ls -la "${model_path}" 2>/dev/null || echo "  (empty or inaccessible)"
 
-    if [ -f "${model_path}/graph.pbtxt" ] &&
-       [ -f "${model_path}/openvino_language_model.xml" ] &&
-       [ -f "${model_path}/openvino_language_model.bin" ]; then
-        echo "  ✓ All required files found"
+    if [ -f "${model_path}/openvino_model.xml" ] || [ -f "${model_path}/openvino_vision_encoder.xml" ]; then
+        echo "  ✓ Model files found"
         return 0
     else
         echo "  ✗ Missing required files:"
-        [ ! -f "${model_path}/graph.pbtxt" ] && echo "    - graph.pbtxt"
-        [ ! -f "${model_path}/openvino_language_model.xml" ] && echo "    - openvino_language_model.xml" 
-        [ ! -f "${model_path}/openvino_language_model.bin" ] && echo "    - openvino_language_model.bin"
+        [ ! -f "${model_path}/openvino_model.xml" ] && echo "    - openvino_model.xml"
+        [ ! -f "${model_path}/openvino_vision_encoder.xml" ] && echo "    - openvino_vision_encoder.xml"
         return 1
     fi
 }

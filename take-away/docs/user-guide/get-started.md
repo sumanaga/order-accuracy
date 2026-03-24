@@ -26,7 +26,6 @@ This guide walks you through the installation, configuration, and first-run of t
 | RAM | 16GB | 32GB+ |
 | GPU | Intel Arc A770 (8GB) | Intel Arc |
 | Storage | 50GB SSD | 200GB NVMe |
-| Network | 1 Gbps | 10 Gbps |
 
 ### Software Requirements
 
@@ -34,22 +33,13 @@ This guide walks you through the installation, configuration, and first-run of t
 |----------|---------|---------|
 | Docker | 24.0+ | Container runtime |
 | Docker Compose | V2+ | Service orchestration |
-| Intel GPU Driver | Latest | GPU support (if Intel) |
-| Python | 3.10+ | Local development (optional) |
+| Intel GPU Driver | Latest | GPU support |
 
 ### Verify Prerequisites
 
 ```bash
-# Docker version
-docker --version
-# Expected: Docker version 24.0.x or higher
-
-# Docker Compose version
-docker compose version
-# Expected: Docker Compose version v2.x.x
-
-# OR for Intel
-clinfo | head -20
+docker --version          # Docker version 24.0.x or higher
+docker compose version    # Docker Compose version v2.x.x
 ```
 
 ---
@@ -65,48 +55,34 @@ cd order-accuracy/take-away
 
 ### Step 2: Initialize Git Submodules
 
-The performance-tools repository is included as a git submodule for benchmarking:
-
 ```bash
-# Initialize and update submodules
 make update-submodules
-
-# Or manually
-cd ..
-git submodule update --init --recursive
-cd take-away
 ```
 
-### Step 3: Setup OVMS Models (First Time Only)
+### Step 3: Create Environment File
 
-The VLM model and EasyOCR models must be downloaded before running the application:
+```bash
+make init-env
+```
 
-> **Note — `TARGET_DEVICE`**: To change the inference device mode, set `TARGET_DEVICE` in your `.env` file to `GPU`, `CPU`, or `AUTO`. After changing the device, re-run the setup script to update the model config:
-> ```bash
-> cd ../ovms-service && ./setup_models.sh --app take-away
-> ```
-> You can also pass the device explicitly: `./setup_models.sh --device CPU`
+Edit the generated `.env` file as needed. See [Configuration](#configuration) below.
 
+### Step 4: Setup OVMS Models (First Time Only)
+
+Set `TARGET_DEVICE` in your `.env` **before** running this step. The script reads that value to export the model in the correct format for the target device.
 
 ```bash
 cd ../ovms-service
 ./setup_models.sh
+cd ../take-away
 ```
 
-This script:
-- Downloads Qwen2.5-VL-7B-Instruct-ov-int8 from HuggingFace
-- Downloads and quantizes YOLOv11 model (INT8 OpenVINO)
-- Downloads EasyOCR detection and recognition models
-- Generates `graph.pbtxt` from `config.json` graph_options
+This downloads and exports:
+- Qwen2.5-VL-7B-Instruct (OpenVINO format)
+- YOLOv11 model (INT8 OpenVINO)
+- EasyOCR detection and recognition models
 
-> **Note**: This only needs to be done once. The model files are shared across applications.
-
-### Step 4: Create Environment File
-
-```bash
-# Create .env from template (backs up existing .env if present)
-make init-env
-```
+> Re-run this step any time you change `TARGET_DEVICE` in `.env`.
 
 ### Step 5: Build and Start
 
@@ -120,33 +96,11 @@ make build REGISTRY=false
 make up
 ```
 
-> **Note**: `make build` pulls pre-built images from Docker Hub by default. Use `REGISTRY=false` to build from source.
-
-## RTSP Stream for Live Verification
-
-To start a standalone RTSP streamer that loops video files for real-time order verification, run:
-
-```bash
-WORKERS=1 docker compose --profile parallel up -d --no-deps rtsp-streamer
-```
-
-> **Prerequisite:** Place a test video at `storage/videos/test.mp4` before starting the streamer. You can run `make download-sample-video` to get one.
-
-Once the streamer is running, the following RTSP URL becomes available:
-
-| Access From | URL |
-|-------------|-----|
-| Host machine / Gradio UI | `rtsp://localhost:8554/station_1` |
-| Other containers (internal) | `rtsp://rtsp-streamer:8554/station_1` |
-
-For multiple stations, increase `WORKERS` (e.g., `WORKERS=3`) to create `station_1`, `station_2`, and `station_3` streams.
-
-
 ---
 
 ## Configuration
 
-### Basic Configuration (.env)
+### Environment File (.env)
 
 ```bash
 # =============================================================================
@@ -155,7 +109,12 @@ For multiple stations, increase `WORKERS` (e.g., `WORKERS=3`) to create `station
 VLM_BACKEND=ovms
 OVMS_ENDPOINT=http://ovms-vlm:8000
 OVMS_MODEL_NAME=Qwen/Qwen2.5-VL-7B-Instruct
-TARGET_DEVICE=GPU            # 'GPU', 'CPU', or 'AUTO'
+TARGET_DEVICE=GPU            # 'GPU', 'CPU', or 'NPU' — also set OPENVINO_DEVICE to match
+
+# =============================================================================
+# Inference Device (must match TARGET_DEVICE)
+# =============================================================================
+OPENVINO_DEVICE=GPU          # Used by benchmark targets
 
 # =============================================================================
 # Semantic Service
@@ -168,163 +127,99 @@ OVMS_TIMEOUT=60
 # =============================================================================
 # MinIO Storage
 # =============================================================================
-MINIO_ROOT_USER=minioadmin
-MINIO_ROOT_PASSWORD=minioadmin
+MINIO_ROOT_USER=<your-minio-username>
+MINIO_ROOT_PASSWORD=<your-minio-password>
 MINIO_ENDPOINT=minio:9000
 ```
 
-### Benchmarking Configuration (.env)
+> **Changing the inference device**: Set both `TARGET_DEVICE` and `OPENVINO_DEVICE` to the same value (`GPU`, `CPU`, or `NPU`), then re-run `./setup_models.sh` to re-export the model for that device.
 
-For stream density and performance testing, configure these variables:
-
-```bash
-# =============================================================================
-# Benchmarking (Stream Density Testing)
-# =============================================================================
-TARGET_LATENCY_MS=25000      # Target latency threshold (ms)
-LATENCY_METRIC=avg           # 'avg' or 'p95'
-WORKER_INCREMENT=1           # Workers added per iteration
-INIT_DURATION=10             # Init wait time (seconds)
-MIN_TRANSACTIONS=3           # Min transactions before measuring
-MAX_ITERATIONS=50            # Max scaling iterations
-MAX_WAIT_SEC=600             # Max wait per iteration (seconds)
-RESULTS_DIR=./results        # Results output directory
-```
-
-> **Note:** CLI arguments override environment variables. See [Benchmarking Guide](benchmarking-guide.md) for detailed usage.
-
-### Configuration Validation
+### Validate Configuration
 
 ```bash
-# Verify configuration
-make check-env
-
-# Show current configuration
-make show-config
+make check-env    # Validate required variables
+make show-config  # Show current configuration
 ```
 
 ---
 
 ## Starting the Services
 
-### Parallel Worker Mode (Production)
+### Single Mode (default)
 
-For multi-station processing, use parallel mode:
+```bash
+make up
+```
+
+### Parallel Worker Mode (multi-station)
 
 ```bash
 make up-parallel WORKERS=4
 ```
 
-# View logs
+### RTSP Streamer (live stream testing)
+
+To feed a looping video as a live RTSP stream:
+
+> **Prerequisite:** Place a test video at `storage/videos/test.mp4` first, or run `make download-sample-video`.
+
+```bash
+WORKERS=1 docker compose --profile parallel up -d --no-deps rtsp-streamer
+```
+
+| Access From | URL |
+|-------------|-----|
+| Host machine | `rtsp://localhost:8554/station_1` |
+| Other containers | `rtsp://rtsp-streamer:8554/station_1` |
+
+Increase `WORKERS` for multiple stations (`station_1`, `station_2`, etc.).
+
+### View Logs
+
+```bash
 make logs
-```
-
-### Stream Density Benchmark
-
-To measure the maximum number of parallel workers the system can sustain under a latency target:
-
-```bash
-make benchmark-stream-density
-```
-
-This automatically scales workers up, measuring end-to-end latency at each level, and stops when the target latency (default 25s) is exceeded. Results are saved to `./results/`.
-
-Override defaults via environment or CLI:
-
-```bash
-make benchmark-stream-density \
-  BENCHMARK_TARGET_LATENCY_MS=30000 \
-  BENCHMARK_INIT_DURATION=15
-```
-
-
-### Metrics Processing
-
-After running benchmarks, consolidate and visualize metrics:
-
-```bash
-# Consolidate metrics from multiple runs
-make consolidate-metrics
-
-# Generate plots from benchmark metrics
-make plot-metrics
-```
-
-
-See [Benchmarking Guide](benchmarking-guide.md) for full options.
-
-### Service Status
-
-```bash
-# Check service status
-make status
-
-# Expected output:
-# oa_service        Up 2 minutes   0.0.0.0:8000->8000/tcp
-# oa_ovms_vlm       Up 2 minutes   0.0.0.0:8001->8001/tcp
-# oa_gradio         Up 2 minutes   0.0.0.0:7860->7860/tcp
-# oa_minio          Up 2 minutes   0.0.0.0:9000-9001->9000-9001/tcp
-# oa_semantic_service  Up 2 minutes   0.0.0.0:8080->8080/tcp
 ```
 
 ---
 
 ## Verifying Installation
 
-### Step 1: Health Check
+### Health Check
 
 ```bash
-# Test API health
 make test-api
-
-# Or directly
-curl http://localhost:8000/health
-# Expected: {"status": "healthy", "service": "order-accuracy"}
 ```
 
-### Step 2: Verify OVMS Model
+This checks both the order accuracy API (`localhost:8000`) and OVMS (`localhost:8001`).
+
+### Service URLs
+
+| Service | URL |
+|---------|-----|
+| Order Accuracy API | http://localhost:8000 |
+| OVMS VLM | http://localhost:8001 |
+| Gradio UI | http://localhost:7860 |
+| MinIO Console | http://localhost:9001 |
+| Semantic Service | http://localhost:8080 |
+
+### Service Status
 
 ```bash
-# Check OVMS configuration
-curl http://localhost:8001/v1/config | jq .
-
-# Expected: Model configuration with Qwen2.5-VL model details
+make status
 ```
-
-### Step 3: Verify MinIO
-
-Access MinIO Console at http://localhost:9001
-
-- Username: `minioadmin`
-- Password: `minioadmin`
-
-Verify buckets:
-- `frames` - Raw captured frames
-- `selected` - YOLO-selected frames
-- `results` - Validation results
-
-### Step 4: Access Gradio UI
-
-Open http://localhost:7860 in your browser.
-
-You should see the Order Accuracy web interface with:
-- Video upload section
-- RTSP stream viewer
-- Order entry form
-- Results display
 
 ---
 
 ## First Order Validation
 
-### Option 1: Via Gradio UI
+### Via Gradio UI
 
 1. Open http://localhost:7860
-2. Upload a test video or enter RTSP URL
+2. Upload a test video or enter an RTSP URL
 3. Click "Upload and Start Processing"
 4. View results showing matched, missing, and extra items
 
-### Option 2: Via REST API
+### Via REST API
 
 ```bash
 # Upload video and validate
@@ -332,26 +227,15 @@ curl -X POST http://localhost:8000/upload-video \
   -F "file=@storage/videos/test.mp4" \
   -F "video_id=test_001"
 
-# Response
-{
-  "status": "success",
-  "video_id": "test_001",
-  "message": "Video uploaded and queued for processing"
-}
-
 # Check results
 curl http://localhost:8000/results/test_001
 ```
 
-### Option 3: Using Make Target
+### Via Make Target
 
-> **Important**: Before running benchmarks, ensure a test video file is present at `storage/videos/test.mp4`. You can download a sample video using:
-> ```bash
-> make download-sample-video
-> ```
+> **Prerequisite:** Ensure `storage/videos/test.mp4` exists. Run `make download-sample-video` if needed.
 
 ```bash
-# Run benchmark with test video
 make benchmark
 ```
 
@@ -361,105 +245,72 @@ make benchmark
 
 ### OVMS Not Starting
 
-**Symptom**: `oa_ovms_vlm` container exits immediately
-
-**Solution**:
 ```bash
 # Check logs
 docker logs oa_ovms_vlm
 
-# Verify model path exists
-ls -la models/vlm/
+# Verify model files exist
+ls -la ../ovms-service/models/
+```
 
+### Connection Refused to OVMS (port 8001)
 
-### Connection Refused to OVMS
+OVMS can take 2–5 minutes to load the model. Wait and check:
 
-**Symptom**: `Connection refused` errors to port 8001
-
-**Solution**:
 ```bash
-# Wait for OVMS to fully load model (can take 2-5 minutes)
 docker logs -f oa_ovms_vlm | grep "Serving"
-
-# Check network
-docker network inspect order-accuracy-net
 ```
 
 ### MinIO Bucket Errors
 
-**Symptom**: `Bucket does not exist` errors
-
-**Solution**:
 ```bash
 # Recreate MinIO with fresh volumes
 make down
-docker volume rm take-away_minio-data
+docker volume rm take-away_minio_data
 make up
-```
-
-### Out of Memory
-
-**Symptom**: Services crash with OOM errors
-
-**Solution**:
-```bash
-# Reduce batch size
-export VLM_BATCH_SIZE=1
-
-# Use CPU instead of GPU (slower but less memory)
-export TARGET_DEVICE=CPU
-
-# Restart services
-make down && make up
 ```
 
 ### GPU Not Detected
 
-**Symptom**: `No GPU devices found`
-
-**Solution**:
 ```bash
-
-# For Intel
 sudo usermod -aG render $USER
-# Logout and login again
+# Log out and log back in, then restart services
+make down && make up
+```
+
+### GPU OOM / Out of Memory
+
+```bash
+# Switch to CPU: set both in .env, then re-export model
+TARGET_DEVICE=CPU
+OPENVINO_DEVICE=CPU
+# Then:
+cd ../ovms-service && ./setup_models.sh
+cd ../take-away && make down && make up
 ```
 
 ---
 
 ## Next Steps
 
-After successful installation and first validation:
-
-1. **Configure for Production**: See [System Requirements](system-requirements.md)
+1. **Run Benchmarks**: See [Benchmarking Guide](benchmarking-guide.md)
 2. **Learn the API**: See [API Reference](api-reference.md)
-3. **Run Benchmarks**: See [Benchmarking Guide](benchmarking-guide.md)
-4. **Customize Settings**: See [How to Use Application](how-to-use-application.md)
+3. **Customize Settings**: See [How to Use Application](how-to-use-application.md)
 
 ---
 
-## Quick Reference Commands
+## Quick Reference
 
 ```bash
-# Start services
-make up                     # Single mode
-make up-parallel WORKERS=4  # Parallel mode
-
-# Check status
-make status
-make logs
-
-# Stop services
-make down
-
-# Clean everything
-make clean
-
-# Run benchmark
-make benchmark
-make benchmark-stream-density
-
-# Development
-make shell                  # Shell into container
-make test-api              # Test endpoints
+make update-submodules      # Init submodules (first time)
+make download-sample-video  # Download sample video
+make init-env               # Create .env from template
+make build && make up       # Build images and start services
+make status                 # Check service status
+make logs                   # View logs
+make test-api               # Test API health
+make down                   # Stop services
+make clean                  # Stop and remove volumes
+make benchmark              # Run fixed-workers benchmark
+make benchmark-stream-density  # Run stream density benchmark
 ```

@@ -8,22 +8,6 @@ This document provides a comprehensive technical overview of the system architec
 
 ---
 
-## Table of Contents
-
-1. [System Architecture](#system-architecture)
-2. [Service Modes](#service-modes)
-3. [Core Components](#core-components)
-4. [Data Flow Pipeline](#data-flow-pipeline)
-5. [Video Processing Architecture](#video-processing-architecture)
-6. [VLM Integration](#vlm-integration)
-7. [Frame Selection Service](#frame-selection-service)
-8. [Semantic Matching](#semantic-matching)
-9. [Docker Services Topology](#docker-services-topology)
-10. [Production Patterns](#production-patterns)
-11. [Scalability Considerations](#scalability-considerations)
-
----
-
 ## System Architecture
 
 ### High-Level Architecture
@@ -73,13 +57,13 @@ This document provides a comprehensive technical overview of the system architec
 
 | Component | Technology | Purpose |
 |-----------|------------|---------|
-| Order Accuracy Service | Python 3.10, FastAPI | Core orchestration and API |
-| Station Workers | GStreamer, multiprocessing | RTSP video processing |
+| Order Accuracy Service | Python, FastAPI | Core orchestration and API |
+| Station Workers | GStreamer (DL Streamer), multiprocessing | RTSP video processing |
 | VLM Scheduler | Threading, queue batching | Request optimization |
 | Frame Selector | YOLO, OpenCV | Optimal frame detection |
 | OVMS VLM | OpenVINO Model Server | Vision Language Model inference |
-| Semantic Service | FastAPI, sentence-transformers | Text semantic matching |
-| Gradio UI | Gradio 3.x | Web interface |
+| Semantic Service | FastAPI | Text semantic matching |
+| Gradio UI | Gradio | Web interface |
 | MinIO | S3-compatible storage | Frame and result storage |
 
 ---
@@ -166,7 +150,7 @@ WORKERS=0
 **Configuration:**
 ```bash
 SERVICE_MODE=parallel
-WORKERS=4
+WORKERS=N
 SCALING_MODE=fixed  # or 'auto'
 ```
 
@@ -232,25 +216,25 @@ Production-ready worker process for single camera stream processing.
 
 | Feature | Implementation |
 |---------|----------------|
-| GStreamer Pipeline | RTSP → H.264 decode → Frame capture |
-| Circuit Breaker | 5 failures in 300s (5 min) → 30s cooldown |
-| Exponential Backoff | 2s → 4s → 8s → ... → 60s max |
-| Stall Detection | No EOS markers for 300s triggers restart |
+| GStreamer Pipeline | RTSP → H.264 decode → `gvapython` frame processing |
+| Circuit Breaker | 5 failures in 120s (2 min) → 10s cooldown |
+| Exponential Backoff | 1s → 2s → 4s → ... → 15s max |
+| Stall Detection | No EOS markers for 120s triggers restart |
 | Health Monitoring | Frame rate, pipeline state tracking |
 
-**Configuration:**
+**Configuration (`src/parallel/station_worker.py`):**
 ```python
 @dataclass
 class PipelineConfig:
     rtsp_latency_ms: int = 0             # Zero buffering
     rtsp_retry_count: int = 50
-    rtsp_timeout_us: int = 5000000       # 5 seconds
-    restart_base_delay_sec: float = 2.0
-    restart_max_delay_sec: float = 60.0
+    rtsp_timeout_us: int = 2000000       # 2 seconds
+    restart_base_delay_sec: float = 1.0
+    restart_max_delay_sec: float = 15.0
     circuit_breaker_max_failures: int = 5
-    circuit_breaker_window_sec: float = 300.0   # 5 minutes
-    circuit_breaker_cooldown_sec: float = 30.0
-    stall_detection_timeout_sec: float = 300.0  # 5 minutes
+    circuit_breaker_window_sec: float = 120.0   # 2 minutes
+    circuit_breaker_cooldown_sec: float = 10.0
+    stall_detection_timeout_sec: float = 120.0  # 2 minutes
 ```
 
 ### 3. VLM Scheduler (`src/parallel/vlm_scheduler.py`)
@@ -289,40 +273,11 @@ Request batching scheduler optimizing OVMS throughput.
 
 Vision Language Model processing with inventory detection and order validation.
 
-```python
-class VLMComponent:
-    """
-    Responsibilities:
-    - Process selected frames through VLM
-    - Generate item detection prompts
-    - Parse VLM responses into structured data
-    - Coordinate with validation agent
-    """
-    
-    def extract_items(
-        self,
-        image_paths: List[str]
-    ) -> dict:
-        # 1. Encode frames for VLM
-        # 2. Generate detection prompt
-        # 3. Call OVMS VLM endpoint
-        # 4. Parse JSON response
-        # 5. Return detected items
-        pass
-```
-
-**VLM Prompt Template:**
-```
-You are an order verification assistant. Analyze the image and identify all 
-visible food items and their quantities.
-
-Return JSON format:
-{
-  "detected_items": [
-    {"name": "item_name", "quantity": N}
-  ]
-}
-```
+**Responsibilities:**
+- Process selected frames through VLM
+- Generate item detection prompts
+- Parse VLM responses into structured data
+- Coordinate with validation agent
 
 ### 5. OVMS VLM Client (`src/core/ovms_client.py`)
 
@@ -439,45 +394,21 @@ response = requests.post(
 
 ### GStreamer Pipeline
 
+The pipeline is built in `src/parallel/station_worker.py` using DL Streamer's `gvapython` plugin for per-frame processing:
+
 ```
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                         GSTREAMER PIPELINE                                       │
-│                                                                                  │
-│  ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐     │
-│  │ rtspsrc  │──▶│ rtph264  │──▶│ h264parse│──▶│ avdec_   │──▶│ video    │     │
-│  │          │   │ depay    │   │          │   │ h264     │   │ convert  │     │
-│  └──────────┘   └──────────┘   └──────────┘   └──────────┘   └──────────┘     │
-│                                                                     │           │
-│                                                                     ▼           │
-│                                                              ┌──────────┐       │
-│                                                              │ appsink  │       │
-│                                                              │ (numpy)  │       │
-│                                                              └──────────┘       │
-│                                                                                  │
-│  Pipeline String:                                                               │
-│  rtspsrc location=rtsp://host/stream latency=100 !                             │
-│  rtph264depay ! h264parse ! avdec_h264 ! videoconvert !                        │
-│  video/x-raw,format=BGR ! appsink emit-signals=true max-buffers=1              │
-│                                                                                  │
-└─────────────────────────────────────────────────────────────────────────────────┘
+rtspsrc location=<url> latency=0 buffer-mode=0 protocols=tcp ntp-sync=false do-rtcp=false retry=5
+! rtph264depay
+! avdec_h264
+! videoconvert
+! video/x-raw,format=BGR
+! videorate ! video/x-raw,framerate=<CAPTURE_FPS>/1
+! queue max-size-buffers=200 leaky=no
+! gvapython module=frame_pipeline function=process_frame
+! fakesink sync=false
 ```
 
-### Frame Processing Flow
-
-```python
-# Frame capture callback
-def on_new_sample(appsink):
-    sample = appsink.emit("pull-sample")
-    buffer = sample.get_buffer()
-    array = buffer.extract_dup(0, buffer.get_size())
-    
-    # Convert to numpy array
-    frame = np.frombuffer(array, dtype=np.uint8)
-    frame = frame.reshape((height, width, 3))
-    
-    # Add to processing queue
-    frame_queue.put((timestamp, frame))
-```
+`CAPTURE_FPS` defaults to `10`. The `gvapython` element calls `frame_pipeline.process_frame()` per frame, which handles EasyOCR order slip detection and MinIO frame upload.
 
 ---
 
@@ -579,39 +510,7 @@ def on_new_sample(appsink):
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Selection Algorithm
-
-```python
-def select_best_frames(frames: List[Frame], top_k: int = 3) -> List[Frame]:
-    """
-    Select optimal frames for VLM processing.
-    
-    Scoring criteria:
-    1. YOLO detection confidence (40%)
-    2. Number of detected objects (30%)
-    3. Frame quality metrics (30%)
-    """
-    scored_frames = []
-    
-    for frame in frames:
-        # YOLO inference
-        detections = yolo_model(frame.image)
-        
-        # Calculate score
-        confidence_score = sum(d.confidence for d in detections) / len(detections)
-        count_score = min(len(detections) / 10, 1.0)
-        quality_score = calculate_frame_quality(frame.image)
-        
-        total_score = (0.4 * confidence_score + 
-                       0.3 * count_score + 
-                       0.3 * quality_score)
-        
-        scored_frames.append((total_score, frame))
-    
-    # Return top K frames
-    scored_frames.sort(key=lambda x: x[0], reverse=True)
-    return [frame for _, frame in scored_frames[:top_k]]
-```
+The selection algorithm scores each frame using YOLO detection confidence and item count, then selects the top `TOP_K` frames per order. Implementation is in `frame-selector-service/`.
 
 ---
 
@@ -641,8 +540,7 @@ def select_best_frames(frames: List[Frame], top_k: int = 3) -> List[Frame]:
 │                                                                                  │
 │  Semantic Service Integration:                                                   │
 │  • External microservice: http://semantic-service:8080                          │
-│  • Fallback: Local semantic matching (sentence-transformers)                    │
-│  • Similarity threshold: 0.85 (configurable)                                    │
+│  • Fallback: Local semantic matching if service unavailable                      │
 │                                                                                  │
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -725,8 +623,8 @@ services:
 │                                                                                  │
 │  Configuration:                                                                  │
 │  • Failure threshold: 5 failures                                                │
-│  • Time window: 300 seconds (5 minutes)                                          │
-│  • Cooldown period: 30 seconds                                                   │
+│  • Time window: 120 seconds (2 minutes)                                          │
+│  • Cooldown period: 10 seconds                                                   │
 │                                                                                  │
 │  States:                                                                         │
 │  ┌──────────┐   5 failures    ┌──────────┐   30s elapsed   ┌──────────┐       │
@@ -742,21 +640,7 @@ services:
 
 ### Exponential Backoff
 
-```python
-def calculate_backoff(attempt: int) -> float:
-    """
-    Exponential backoff with jitter.
-    
-    Backoff sequence: 2s, 4s, 8s, 16s, 32s, 60s (max)
-    """
-    base_delay = 2.0
-    max_delay = 60.0
-    
-    delay = min(base_delay * (2 ** attempt), max_delay)
-    jitter = random.uniform(0, delay * 0.1)
-    
-    return delay + jitter
-```
+Backoff sequence: 1s → 2s → 4s → 8s → 15s (max), with jitter. Implemented in `src/parallel/station_worker.py`.
 
 ### Health Monitoring
 
@@ -786,7 +670,7 @@ class PipelineMetrics:
 │                                                                                  │
 │  Fixed Scaling (SCALING_MODE=fixed):                                            │
 │  • Static worker count defined at startup                                       │
-│  • Configuration: WORKERS=4                                                     │
+│  • Configuration: WORKERS=N (set at startup)                                    │
 │                                                                                  │
 │  Auto Scaling (SCALING_MODE=auto):                                              │
 │  • Dynamic worker adjustment based on metrics                                   │
@@ -808,12 +692,12 @@ class PipelineMetrics:
 
 ### Performance Optimization
 
-| Optimization | Implementation | Impact |
-|--------------|----------------|--------|
-| VLM Batching | 50-100ms time windows | +40% throughput |
-| Frame Selection | YOLO pre-filtering | -60% VLM calls |
-| INT8 Quantization | OpenVINO model optimization | +30% inference speed |
-| Connection Pooling | Reuse HTTP connections | -20% latency |
+| Optimization | Implementation |
+|--------------|----------------|
+| VLM Batching | 50-100ms time windows via VLM Scheduler |
+| Frame Selection | YOLO pre-filtering reduces unnecessary VLM calls |
+| INT8 Quantization | OpenVINO INT8 model served via OVMS |
+| Connection Pooling | HTTP session reuse to OVMS |
 
 ---
 
