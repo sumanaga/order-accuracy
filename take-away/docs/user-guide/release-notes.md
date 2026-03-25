@@ -4,6 +4,50 @@ Version history and changelog for Take-Away Order Accuracy.
 
 ---
 
+## Version 2026.0.0 (March 2026)
+
+**General Availability Release**
+
+This is the first GA release of Take-Away Order Accuracy, promoted from `2026.0-rc2` with no code changes. All functionality is identical to `2026.0-rc2`.
+
+### Published Images
+
+| Image | Tag |
+|-------|-----|
+| `intel/order-accuracy-take-away` | `2026.0.0` |
+| `intel/order-accuracy-frame-selector` | `2026.0.0` |
+| `intel/order-accuracy-take-away-ui` | `2026.0.0` |
+| `intel/order-accuracy-take-away-rtsp` | `2026.0.0` |
+
+---
+
+## Version 2026.0-rc2 (March 2026)
+
+### What's New
+
+- **OVMS export scripts updated** to OVMS 2026.0 release branch (`releases/2026/0`); `openvino` and `openvino-tokenizers` updated to `2026.0.0rc3`
+- **YOLO model download** added to `setup_models.sh` — YOLO models are now downloaded automatically during setup
+- **Parallel mode VLM scheduler** improvements to the `VLMScheduler` batching logic
+- **Frame selector fix** — corrected frame selection logic in `frame-selector-service`
+- **Order recall in Gradio UI** — added order recall/replay functionality
+- **RTSP streaming fix** — resolved RTSP stream connection issues in the Gradio UI
+- **FastAPI and Starlette version update** in the Gradio UI image for security/compatibility
+- **Benchmark duration increased** (`BENCHMARK_DURATION` default raised)
+- **`setup_models.sh` simplified** — script restructured for clarity
+
+### Published Images
+
+| Image | Tag |
+|-------|-----|
+| `intel/order-accuracy-take-away` | `2026.0-rc2` |
+| `intel/order-accuracy-frame-selector` | `2026.0-rc2` |
+| `intel/order-accuracy-take-away-ui` | `2026.0-rc2` |
+| `intel/order-accuracy-take-away-rtsp` | `2026.0-rc1` |
+
+> `rtsp-streamer` image tag remains `2026.0-rc1` — no changes in this release.
+
+---
+
 ## Version 2026.0-rc1 (March 2026)
 
 **Initial Release Candidate**

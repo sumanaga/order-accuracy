@@ -1,19 +1,6 @@
-# Dine-In Order Accuracy - Overview
+# System Architecture & Requirements
 
 Staff-triggered plate validation workflow designed for full-service restaurant expo operations. This solution demonstrates zero-training deployment with vision-language models (VLM), semantic order reconciliation, and latency instrumentation aligned to operational service windows.
-
-## Table of Contents
-
-- [Introduction](#introduction)
-- [Key Features](#key-features)
-- [How It Works](#how-it-works)
-- [System Architecture](#system-architecture)
-- [Component Details](#component-details)
-- [Data Flow](#data-flow)
-- [Production Features](#production-features)
-- [Performance Characteristics](#performance-characteristics)
-
----
 
 ## Introduction
 
@@ -137,7 +124,7 @@ In a full-service restaurant:
 
 | Container | Image | Ports | Description |
 |-----------|-------|-------|-------------|
-| `dinein_app` | `intel/order-accuracy-dine-in:2026.0-rc1` | 7861, 8083 | Main application (Gradio + FastAPI) |
+| `dinein_app` | `intel/order-accuracy-dine-in:2026.0.0` | 7861, 8083 | Main application (Gradio + FastAPI) |
 | `dinein_ovms_vlm` | `openvino/model_server:latest-gpu` | 8002 | Vision-Language Model server |
 | `dinein_semantic_service` | `intel/semantic-search-agent:1.0.0` | 8081, 9091 | Semantic text matching |
 | `metrics-collector` | `intel/hl-ai-metrics-collector:1.0.0` | 8084 | System metrics aggregation |
@@ -398,42 +385,98 @@ class BoundedValidationCache:
 
 ### Latency Breakdown
 
-| Stage | Typical Duration | Notes |
-|-------|-----------------|-------|
-| Image Preprocessing | 50-100ms | Resize, enhance, compress |
-| VLM Inference | 8-12s | Qwen2.5-VL-7B on Intel GPU |
-| Semantic Matching | 20-50ms | Per item comparison |
-| **Total E2E** | **9-15s** | Target: < 15s |
+| Stage | Typical Duration |
+|-------|-----------------|
+| Image Preprocessing | 50–100 ms |
+| VLM Inference | 8–12 s |
+| Semantic Matching | 20–50 ms |
+| **Total E2E** | **9–15 s** |
 
-### Resource Utilization
+Target: < 15 s end-to-end for operational efficiency.
 
-| Resource | Typical Usage | Notes |
-|----------|--------------|-------|
-| GPU | 80-100% | During VLM inference |
-| CPU | 20-30% | Preprocessing + orchestration |
-| Memory | 70-80% | Model weights + cache |
+---
 
-### Stream Density Results
+---
 
+## System Requirements
+
+### Hardware Requirements
+
+#### Development / Single Station
+
+| Component | Requirement |
+|-----------|-------------|
+| CPU | 8+ cores |
+| RAM | 16 GB |
+| GPU | Intel Arc A770 (16 GB) or equivalent Intel GPU |
+| Storage | 50 GB SSD |
+
+#### Production
+
+| Component | Requirement |
+|-----------|-------------|
+| CPU | 16+ cores |
+| RAM | 32 GB |
+| GPU | Intel Data Center GPU (for concurrent validation) |
+| Storage | 200 GB NVMe SSD |
+
+**GPU VRAM guidance:** The Qwen2.5-VL-7B INT8 model requires ~6–8 GB of VRAM.
+
+### Software Requirements
+
+#### Operating System
+
+Ubuntu 22.04 LTS is the validated platform (matches the `python:3.13-slim` base image running on the host GPU driver stack).
+
+#### Container Runtime
+
+| Software | Minimum Version |
+|----------|-----------------|
+| Docker Engine | 24.0 |
+| Docker Compose | V2 (2.20+) |
+
+#### GPU Drivers
+
+Intel GPU drivers must be installed from [packages.intel.com](https://packages.intel.com). Verify the GPU is accessible to Docker:
+
+```bash
+ls /dev/dri/
+docker run --rm --device /dev/dri intel/openvino_dev:latest python3 -c \
+  "from openvino.runtime import Core; print(Core().available_devices)"
 ```
-Target Latency: 15000ms (15s)
 
-┌──────────┬────────────┬─────────────┬────────┐
-│ Density  │ Avg Latency│ P95 Latency │ Status │
-├──────────┼────────────┼─────────────┼────────┤
-│ 1 image  │ 11,726ms   │ 11,726ms    │ PASS   │
-│ 2 images │ 14,808ms   │ 16,743ms    │ PASS   │
-│ 3 images │ 19,509ms   │ 28,952ms    │ FAIL   │
-└──────────┴────────────┴─────────────┴────────┘
+Expected output includes `GPU`.
 
-Maximum sustainable density: 2 concurrent images
-```
+---
+
+## Network Requirements
+
+### Port Configuration
+
+| Service | Port | Purpose |
+|---------|------|---------|
+| Gradio UI | 7861 | Web interface |
+| REST API | 8083 | FastAPI endpoints |
+| OVMS VLM | 8002 | Model inference (external) |
+| Semantic Service | 8081 | Semantic matching (external) |
+| Metrics Collector | 8084 | System metrics |
+
+---
+
+## Pre-Deployment Checklist
+
+- [ ] Docker and Docker Compose installed and working
+- [ ] Intel GPU drivers installed and GPU visible to Docker
+- [ ] Required ports available (7861, 8083, 8002, 8081, 8084)
+- [ ] At least 50 GB free disk space
+- [ ] VLM model downloaded (`setup_models.sh` completed)
+- [ ] `.env` file created (`make init-env`)
+- [ ] Plate images placed in `images/` and `configs/orders.json` updated
 
 ---
 
 ## Next Steps
 
 - [Get Started](get-started.md) - Set up and run the application
-- [System Requirements](system-requirements.md) - Hardware/software prerequisites
 - [API Reference](api-reference.md) - REST endpoint documentation
 - [How to Build](how-to-build-from-source.md) - Build from source code

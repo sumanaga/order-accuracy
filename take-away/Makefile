@@ -54,7 +54,7 @@ OOM_PROTECTION ?= 1
 PERF_TOOLS_DIR ?= ../performance-tools/benchmark-scripts
 
 # Version tag for registry images
-TAG ?= 2026.0-rc1
+TAG ?= 2026.0.0
 
 # Sample video for quick-start testing (orders 384 → 651 → 925)
 # Hosted on the upstream repo's GitHub Releases. Override via env if needed:
@@ -617,7 +617,7 @@ plot-metrics: setup-dirs ## Generate plots from benchmark metrics
 		. venv/bin/activate && \
 		pip3 install -r requirements.txt && \
 		python3 usage_graph_plot.py \
-			--results_dir $(CURDIR)/$(RESULTS_DIR); \
+			--dir $(CURDIR)/$(RESULTS_DIR); \
 		deactivate \
 	)
 
