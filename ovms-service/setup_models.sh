@@ -7,6 +7,31 @@ PROJECT_ROOT="$(dirname "${SCRIPT_DIR}")"
 MODELS_DIR="${SCRIPT_DIR}/models"
 
 ###############################################
+# ARGUMENT PARSING
+# --app take-away  (default)
+# --app dine-in
+###############################################
+APP="take-away"
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --app)
+            APP="$2"
+            shift 2
+            ;;
+        *)
+            echo "Unknown argument: $1"
+            echo "Usage: $0 [--app take-away|dine-in]"
+            exit 1
+            ;;
+    esac
+done
+
+if [ "${APP}" != "take-away" ] && [ "${APP}" != "dine-in" ]; then
+    echo "Error: --app must be 'take-away' or 'dine-in' (got: ${APP})"
+    exit 1
+fi
+
+###############################################
 # HARD CODED MODEL REGISTRY
 # key = model_name passed to --model_name (also used as path under MODELS_DIR)
 # value = HuggingFace source passed to --source_model
@@ -21,22 +46,23 @@ POTENTIAL_SOURCE_DIRS=(
 )
 
 ###############################################
-# LOAD OVMS_MODEL_NAME FROM take-away/.env
+# LOAD CONFIG FROM APP-SPECIFIC .env
 ###############################################
-ENV_FILE="${PROJECT_ROOT}/take-away/.env"
+ENV_FILE="${PROJECT_ROOT}/${APP}/.env"
+echo "App: ${APP}  →  reading config from ${ENV_FILE}"
 if [ -f "${ENV_FILE}" ]; then
     OVMS_MODEL_NAME_ENV=$(grep -E '^OVMS_MODEL_NAME=' "${ENV_FILE}" | head -1 | cut -d'=' -f2- | tr -d '"\r')
 fi
 # Fall back to the hard-coded source model if .env is missing or unset
 OVMS_MODEL_NAME_ENV="${OVMS_MODEL_NAME_ENV:-Qwen/Qwen2.5-VL-7B-Instruct}"
 
-# Read TARGET_DEVICE from take-away/.env (GPU or CPU); default GPU
-TARGET_DEVICE_ENV=$(grep -E '^TARGET_DEVICE=' "${ENV_FILE}" 2>/dev/null | head -1 | cut -d'=' -f2- | tr -d '"\r')
-TARGET_DEVICE_ENV="${TARGET_DEVICE_ENV:-GPU}"
+# Read TARGET_DEVICE: shell env var takes precedence over take-away/.env, default GPU
+_TARGET_DEVICE_FILE=$(grep -E '^TARGET_DEVICE=' "${ENV_FILE}" 2>/dev/null | head -1 | cut -d'=' -f2- | tr -d '"\r')
+TARGET_DEVICE_ENV="${TARGET_DEVICE:-${_TARGET_DEVICE_FILE:-GPU}}"
 
-# Read VLM_PRECISION from take-away/.env (int8, int4, fp16, fp32); default int8
-VLM_PRECISION_ENV=$(grep -E '^VLM_PRECISION=' "${ENV_FILE}" 2>/dev/null | head -1 | cut -d'=' -f2- | tr -d '"\r')
-VLM_PRECISION_ENV="${VLM_PRECISION_ENV:-int8}"
+# Read VLM_PRECISION: shell env var takes precedence over take-away/.env, default int8
+_VLM_PRECISION_FILE=$(grep -E '^VLM_PRECISION=' "${ENV_FILE}" 2>/dev/null | head -1 | cut -d'=' -f2- | tr -d '"\r')
+VLM_PRECISION_ENV="${VLM_PRECISION:-${_VLM_PRECISION_FILE:-int8}}"
 
 ###############################################
 echo "=========================================="
@@ -48,28 +74,69 @@ echo ""
 check_model() {
     local model_path="$1"
 
-    echo "Debug: Checking model at ${model_path}"
-    
     if [ ! -d "${model_path}" ]; then
-        echo "  Directory not found"
-        
-        if [ ! -d "${model_path}" ]; then
-            return 1
-        fi
-    fi
-    
-    echo "  Contents of ${model_path}:"
-    ls -la "${model_path}" 2>/dev/null || echo "  (empty or inaccessible)"
-
-    if [ -f "${model_path}/openvino_model.xml" ] || [ -f "${model_path}/openvino_vision_encoder.xml" ]; then
-        echo "  ✓ Model files found"
-        return 0
-    else
-        echo "  ✗ Missing required files:"
-        [ ! -f "${model_path}/openvino_model.xml" ] && echo "    - openvino_model.xml"
-        [ ! -f "${model_path}/openvino_vision_encoder.xml" ] && echo "    - openvino_vision_encoder.xml"
         return 1
     fi
+
+    # A successfully exported OVMS model always has:
+    #   - graph.pbtxt  (created by export_model.py for all VLM/LLM models)
+    #   - at least one .xml file (OpenVINO IR; name varies by model architecture)
+    if [ -f "${model_path}/graph.pbtxt" ] && \
+       ls "${model_path}"/*.xml > /dev/null 2>&1; then
+        echo "  ✓ Model found at ${model_path}"
+        return 0
+    else
+        echo "  ✗ Model not ready at ${model_path} (missing graph.pbtxt or .xml files)"
+        return 1
+    fi
+}
+
+###############################################
+# Replace the host MODELS_DIR path with the container path /models in graph.pbtxt.
+# export_model.py always writes the absolute host path, but OVMS runs inside a
+# container where the models directory is mounted at /models.
+###############################################
+patch_graph_pbtxt_paths() {
+    local model_name="$1"
+    local graph_file="${MODELS_DIR}/${model_name}/graph.pbtxt"
+
+    if [ ! -f "${graph_file}" ]; then
+        return 0
+    fi
+
+    if grep -qF "${MODELS_DIR}" "${graph_file}"; then
+        sed -i "s|${MODELS_DIR}|/models|g" "${graph_file}"
+        echo "  ✓ graph.pbtxt paths patched (host path → /models)"
+    fi
+}
+
+###############################################
+# Update device in graph.pbtxt when TARGET_DEVICE doesn't match.
+# The device field is just a text string — edit it directly with sed.
+# No need to re-run export_model.py (that would require HuggingFace source).
+###############################################
+update_graph_pbtxt_device() {
+    local model_name="$1"
+    local graph_file="${MODELS_DIR}/${model_name}/graph.pbtxt"
+
+    if [ ! -f "${graph_file}" ]; then
+        return 0
+    fi
+
+    # Always patch container paths first (handles models that existed before this fix)
+    patch_graph_pbtxt_paths "${model_name}"
+
+    local current_device
+    current_device=$(grep -oP '(?<=device: ")[^"]+' "${graph_file}" || true)
+
+    if [ "${current_device}" = "${TARGET_DEVICE_ENV}" ]; then
+        echo "  ✓ graph.pbtxt device already set to ${TARGET_DEVICE_ENV}"
+        return 0
+    fi
+
+    echo "  Device mismatch: graph.pbtxt has \"${current_device}\", TARGET_DEVICE is \"${TARGET_DEVICE_ENV}\""
+    sed -i "s|device: \"${current_device}\"|device: \"${TARGET_DEVICE_ENV}\"|g" "${graph_file}"
+    echo "  ✓ graph.pbtxt device updated: ${current_device} → ${TARGET_DEVICE_ENV}"
 }
 
 ###############################################
@@ -179,6 +246,7 @@ for MODEL_NAME in "${!MODEL_SOURCES[@]}"; do
     ###########################################
     if check_model "${TARGET_PATH}"; then
         echo "✓ Model already exists locally"
+        update_graph_pbtxt_device "${MODEL_NAME}"
         continue
     fi
 
@@ -195,6 +263,7 @@ for MODEL_NAME in "${!MODEL_SOURCES[@]}"; do
                 cp -r "${SOURCE_DIR}/${MODEL_NAME}" "$(dirname "${MODELS_DIR}/${MODEL_NAME}")/"
 
                 echo "✓ Copied ${MODEL_NAME}"
+                update_graph_pbtxt_device "${MODEL_NAME}"
                 continue 2
             fi
         fi
@@ -212,9 +281,10 @@ for MODEL_NAME in "${!MODEL_SOURCES[@]}"; do
     export_model "${MODEL_NAME}" "${SOURCE_MODEL}"
 
     ###########################################
-    # Verify
+    # Verify and patch container paths
     ###########################################
     if check_model "${TARGET_PATH}"; then
+        patch_graph_pbtxt_paths "${MODEL_NAME}"
         echo "✓ Export successful for ${MODEL_NAME}"
     else
         echo "✗ Export failed for ${MODEL_NAME}"

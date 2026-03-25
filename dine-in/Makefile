@@ -87,6 +87,10 @@ BENCHMARK_ITERATIONS ?= 1
 BENCHMARK_DURATION ?= 180
 BENCHMARK_TARGET_FPS ?= 15.0
 TARGET_DEVICE ?= GPU
+# Automatically select CPU-only OVMS image when TARGET_DEVICE=CPU
+OVMS_IMAGE ?= $(if $(filter CPU,$(TARGET_DEVICE)),openvino/model_server:latest,openvino/model_server:latest-gpu)
+# Path to the exported OVMS model directory (relative to dine-in/)
+OVMS_MODELS_DIR ?= ../ovms-service/models
 
 # Colors for output
 RED := \033[0;31m
@@ -97,7 +101,7 @@ NC := \033[0m  # No Color
 
 .PHONY: help build up down logs restart benchmark benchmark-results benchmark-metrics \
         benchmark-stream-density benchmark-density benchmark-density-results clean \
-        shell test-api benchmark-test benchmark-single \
+        shell test-api benchmark-test benchmark-single check-device \
         worker worker-start worker-stop worker-logs worker-results \
         update-submodules fetch-benchmark build-benchmark init-env \
         consolidate-metrics plot-metrics clean-images clean-containers clean-all
@@ -241,8 +245,23 @@ init-env:
 	fi
 	@echo "Edit .env to customize your configuration."
 
+check-device: ## Verify graph.pbtxt device matches TARGET_DEVICE
+	@GRAPH="$(OVMS_MODELS_DIR)/$(OVMS_MODEL_NAME)/graph.pbtxt"; \
+	if [ ! -f "$$GRAPH" ]; then \
+		echo "$(YELLOW)Warning: graph.pbtxt not found at $$GRAPH (model not yet exported?)$(NC)"; \
+		exit 0; \
+	fi; \
+	GRAPH_DEVICE=$$(grep -oP '(?<=device: ")[^"]+' "$$GRAPH" || true); \
+	if [ "$$GRAPH_DEVICE" = "$(TARGET_DEVICE)" ]; then \
+		echo "$(GREEN)✓ graph.pbtxt device matches TARGET_DEVICE ($(TARGET_DEVICE))$(NC)"; \
+	else \
+		echo "$(RED)✗ Device mismatch: graph.pbtxt has \"$$GRAPH_DEVICE\" but TARGET_DEVICE=$(TARGET_DEVICE)$(NC)"; \
+		echo "$(YELLOW)  Fix: run  cd ../ovms-service && ./setup_models.sh --app dine-in$(NC)"; \
+		exit 1; \
+	fi
 
-up:
+
+up: check-device
 	@echo "Starting dine-in services..."
 	@mkdir -p results && chmod 777 results
 	@if [ "$(REGISTRY)" = "false" ]; then \
@@ -412,7 +431,7 @@ benchmark-single: ## Test with specific image via API (IMAGE_ID=MCD-1001)
                 printf "$${GREEN}Latency: $${LATENCY}ms$${NC}\n"; \
         '
 
-benchmark:
+benchmark: check-device
 	@echo "╔═══════════════════════════════════════════════════════════════════╗"
 	@echo "║       Dine-In Order Accuracy Benchmark                            ║"
 	@echo "╚═══════════════════════════════════════════════════════════════════╝"
@@ -456,7 +475,7 @@ benchmark-metrics:
 		echo "No benchmark metrics found. Run 'make benchmark' first."; \
 	fi
 
-benchmark-stream-density: ## Run Dine-In stream density benchmark (image-based latency)
+benchmark-stream-density: check-device ## Run Dine-In stream density benchmark (image-based latency)
 	@if [ "$(OOM_PROTECTION)" = "0" ]; then \
 		echo "╔════════════════════════════════════════════════════════════╗"; \
 		echo "║ WARNING                                                    ║"; \

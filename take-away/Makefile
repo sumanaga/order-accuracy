@@ -7,7 +7,7 @@
 
 .PHONY: help build up down logs restart status clean benchmark benchmark-quick benchmark-results \
 		logs-vlm logs-gradio logs-frame-selector shell test-api ps exec dev-build \
-		check-env show-config init-env benchmark-oa benchmark-stream-density \
+		check-env check-device show-config init-env benchmark-oa benchmark-stream-density \
 		benchmark-oa-metrics benchmark-oa-results benchmark-oa-help \
 		update-submodules fetch-benchmark build-benchmark \
 		consolidate-metrics plot-metrics clean-images clean-containers clean-all \
@@ -32,7 +32,9 @@ SCALING_MODE ?= fixed
 VLM_BACKEND ?= ovms
 OVMS_ENDPOINT ?= http://ovms-vlm:8000
 OVMS_MODEL_NAME ?= Qwen/Qwen2.5-VL-7B-Instruct
-OPENVINO_DEVICE ?= GPU
+OPENVINO_DEVICE ?= $(TARGET_DEVICE)
+# Automatically select CPU-only OVMS image when TARGET_DEVICE=CPU
+OVMS_IMAGE ?= $(if $(filter CPU,$(TARGET_DEVICE)),openvino/model_server:latest,openvino/model_server:latest-gpu)
 
 # Semantic Service
 SEMANTIC_VLM_BACKEND ?= ovms
@@ -137,6 +139,24 @@ download-sample-video: setup-dirs
 REQUIRED_OVMS_VARS := OVMS_ENDPOINT OVMS_MODEL_NAME
 REQUIRED_OPENVINO_VARS := OPENVINO_DEVICE VLM_MODEL_PATH
 
+# Path to the exported OVMS model directory (relative to take-away/)
+OVMS_MODELS_DIR ?= ../ovms-service/models
+
+check-device: ## Check that graph.pbtxt device matches TARGET_DEVICE
+	@GRAPH="$(OVMS_MODELS_DIR)/$(OVMS_MODEL_NAME)/graph.pbtxt"; \
+	if [ ! -f "$$GRAPH" ]; then \
+		echo "$(YELLOW)Warning: graph.pbtxt not found at $$GRAPH (model not yet exported?)$(NC)"; \
+		exit 0; \
+	fi; \
+	GRAPH_DEVICE=$$(grep -oP '(?<=device: ")[^"]+' "$$GRAPH" || true); \
+	if [ "$$GRAPH_DEVICE" = "$(TARGET_DEVICE)" ]; then \
+		echo "$(GREEN)✓ graph.pbtxt device matches TARGET_DEVICE ($(TARGET_DEVICE))$(NC)"; \
+	else \
+		echo "$(RED)✗ Device mismatch: graph.pbtxt has \"$$GRAPH_DEVICE\" but TARGET_DEVICE=$(TARGET_DEVICE)$(NC)"; \
+		echo "$(YELLOW)  Fix: run  cd ../ovms-service && ./setup_models.sh --app take-away$(NC)"; \
+		exit 1; \
+	fi
+
 check-env:
 	@echo "$(BLUE)Checking environment configuration...$(NC)"
 	@# Check if .env exists
@@ -176,8 +196,7 @@ check-env:
 		fi; \
 	fi
 	@echo "$(GREEN)✓ Environment configuration valid$(NC)"
-
-# =============================================================================
+	@$(MAKE) --no-print-directory check-device
 # Git Submodules
 # =============================================================================
 
@@ -260,6 +279,7 @@ help:
 	@echo "  make download-sample-video    - Download sample test video (orders 384→651→925)"
 	@echo "  make show-config              - Show current configuration"
 	@echo "  make check-env                - Validate environment variables"
+	@echo "  make check-device             - Verify graph.pbtxt device matches TARGET_DEVICE"
 	@echo ""
 	@echo "$(YELLOW)Basic Commands:$(NC)"
 	@echo "  make build                    - Pull images (or build locally with REGISTRY=false)"
@@ -423,7 +443,7 @@ logs-all:
 # Benchmark
 # =============================================================================
 
-benchmark: setup-dirs ## Run Order Accuracy benchmark (uses benchmark_order_accuracy.py)
+benchmark: check-env setup-dirs ## Run Order Accuracy benchmark (uses benchmark_order_accuracy.py)
 	@echo "╔═══════════════════════════════════════════════════════════════════╗"
 	@echo "║       Take-Away Order Accuracy Benchmark                          ║"
 	@echo "╚═══════════════════════════════════════════════════════════════════╝"
@@ -475,7 +495,7 @@ benchmark-quick: setup-dirs ## Quick API test with curl (latency only)
 		echo "Results logged to results/benchmark_performance.log"; \
 	'
 
-benchmark-oa: setup-dirs ## Run Order Accuracy benchmark with fixed workers
+benchmark-oa: check-env setup-dirs ## Run Order Accuracy benchmark with fixed workers
 	@echo "╔═══════════════════════════════════════════════════════════════════╗"
 	@echo "║       Take-Away Order Accuracy Benchmark                          ║"
 	@echo "╚═══════════════════════════════════════════════════════════════════╝"
@@ -500,7 +520,7 @@ benchmark-oa: setup-dirs ## Run Order Accuracy benchmark with fixed workers
 		deactivate \
 	)
 
-benchmark-stream-density: setup-dirs ## Run Order Accuracy stream density benchmark (latency-based)
+benchmark-stream-density: check-env setup-dirs ## Run Order Accuracy stream density benchmark (latency-based)
 	@echo "╔═══════════════════════════════════════════════════════════════════╗"
 	@echo "║       Take-Away Stream Density Benchmark (Latency-based)          ║"
 	@echo "╚═══════════════════════════════════════════════════════════════════╝"
