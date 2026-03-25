@@ -27,7 +27,7 @@ services:
 
   # OVMS VLM service
   ovms-vlm:
-    image: openvino/model_server:latest-gpu
+    image: ${OVMS_IMAGE:-openvino/model_server:latest-gpu}
     container_name: oa_ovms_vlm
     ports:
       - "8001:8000"

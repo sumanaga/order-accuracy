@@ -1,7 +1,7 @@
 services:
   # OVMS VLM service for Vision-Language Model inference
   ovms-vlm:
-    image: openvino/model_server:latest-gpu
+    image: ${OVMS_IMAGE:-openvino/model_server:latest-gpu}
     container_name: dinein_ovms_vlm
     ports:
       - "8002:8000"  # Changed from 8001 to avoid conflict
