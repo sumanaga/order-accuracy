@@ -119,6 +119,7 @@ services:
       RTSP_STREAMER_PORT: ${RTSP_STREAMER_PORT:-8554}
       RTSP_STREAMS: ${RTSP_STREAMS:-}
       RTSP_STREAM_NAME: ${RTSP_STREAM_NAME:-test}
+      LOOP_COUNT: ${LOOP_COUNT:--1}
       
 
       
@@ -334,6 +335,8 @@ services:
       - ${VIDEOS_DIR:-./storage/videos}:/media:ro
     environment:
       - MEDIA_DIR=/media
+      - WORKERS=${WORKERS:-2}
+      - LOOP_COUNT=${LOOP_COUNT:--1}
     ports:
       - "8554:8554"
     restart: unless-stopped

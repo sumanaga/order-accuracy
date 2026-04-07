@@ -149,7 +149,9 @@ class OVMSVLMClient:
                 "image_url": {"url": self._encode_image(img_array)}
             })
 
-        # Build request
+        # Build request — use streaming mode so OVMS continuous batching
+        # can interleave concurrent VLM requests.  Non-streaming mode causes
+        # the second concurrent HTTP response to hang indefinitely in OVMS.
         request_data = {
             "model": self.model_name,
             "messages": [
@@ -169,15 +171,16 @@ class OVMSVLMClient:
             ],
             "max_completion_tokens": self.max_new_tokens,
             "temperature": self.temperature,
+            "stream": True,
         }
 
         # Save input frames for debugging (before sending request)
         if unique_id and SAVE_VLM_INPUT:
             self._save_input_frames(images, unique_id)
 
-        # Send request
+        # Send request (streaming SSE)
         try:
-            logger.info(f"[OVMS-CLIENT] Sending request to: {self.endpoint}")
+            logger.info(f"[OVMS-CLIENT] Sending streaming request to: {self.endpoint}")
             logger.info(f"[OVMS-CLIENT] Request data: model={request_data['model']}, images={len(images)}, prompt_len={len(prompt)}")
             logger.debug(f"[OVMS-CLIENT] Full request: {request_data}")
             
@@ -190,20 +193,53 @@ class OVMSVLMClient:
                 headers={"Content-Type": "application/json"},
                 json=request_data,
                 timeout=self.timeout,
+                stream=True,
             )
-            logger.info(f"[OVMS-CLIENT] Response status: {response.status_code}")
+            logger.info(f"[OVMS-CLIENT] Streaming response status: {response.status_code}")
             
-            # Log response body for debugging
             if response.status_code != 200:
                 logger.error(f"[OVMS-CLIENT] Error response: {response.text[:500]}")
             
             response.raise_for_status()
 
-            result = response.json()
+            # Collect streamed SSE chunks into full text
+            import json as _json
+            text_parts = []
+            prompt_tokens = 0
+            completion_tokens = 0
+            total_tokens = 0
+            first_token_time = None
+
+            for line in response.iter_lines(decode_unicode=True):
+                if not line:
+                    continue
+                # SSE format: "data: {json}" or "data: [DONE]"
+                if not line.startswith("data: "):
+                    continue
+                payload = line[6:]  # strip "data: " prefix
+                if payload.strip() == "[DONE]":
+                    break
+                try:
+                    chunk = _json.loads(payload)
+                    delta = chunk.get("choices", [{}])[0].get("delta", {})
+                    token_text = delta.get("content", "")
+                    if token_text:
+                        if first_token_time is None:
+                            first_token_time = time.time()
+                        text_parts.append(token_text)
+                    # Usage may appear in the final chunk
+                    usage = chunk.get("usage")
+                    if usage:
+                        prompt_tokens = usage.get("prompt_tokens", prompt_tokens)
+                        completion_tokens = usage.get("completion_tokens", completion_tokens)
+                        total_tokens = usage.get("total_tokens", total_tokens)
+                except _json.JSONDecodeError:
+                    logger.warning(f"[OVMS-CLIENT] Skipping malformed SSE chunk: {payload[:100]}")
+
+            text = "".join(text_parts)
             total_latency = time.time() - request_start
-            
-            # Extract text from response
-            text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+            generated_tokens = completion_tokens if completion_tokens else len(text_parts)
+
             logger.info(f"[OVMS-CLIENT] Response received in {total_latency:.2f}s")
             logger.debug(f"[OVMS-CLIENT] Generated text: {text[:200]}...")
 
@@ -215,13 +251,6 @@ class OVMSVLMClient:
                 logger.info(f"[OVMS-CLIENT]   {line}")
             logger.info(f"[OVMS-CLIENT] ================================")
 
-            # Extract token usage from response
-            usage = result.get("usage", {})
-            prompt_tokens = usage.get("prompt_tokens", 0)
-            completion_tokens = usage.get("completion_tokens", 0)
-            total_tokens = usage.get("total_tokens", 0)
-            generated_tokens = completion_tokens
-            
             # Calculate VLM performance metrics
             tpot = (total_latency / generated_tokens) if generated_tokens > 0 else 0.0
             throughput_mean = (generated_tokens / total_latency) if total_latency > 0 else 0.0

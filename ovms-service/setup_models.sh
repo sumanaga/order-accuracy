@@ -196,7 +196,7 @@ export_model() {
     python "${SCRIPT_DIR}/export_model.py" text_generation \
       --source_model "${SOURCE_MODEL}" \
       --weight-format "${VLM_PRECISION_ENV}" \
-      --pipeline_type VLM \
+      --pipeline_type VLM_CB \
       "${target_device_args[@]}" \
       --cache_size 32 \
       --max_num_seqs 4 \

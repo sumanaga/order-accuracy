@@ -6,6 +6,11 @@ RTSP_PORT=${RTSP_PORT:-8554}
 FFMPEG_BIN=${FFMPEG_BIN:-ffmpeg}
 MEDIAMTX_BIN=${MEDIAMTX_BIN:-/opt/rtsp-streamer/mediamtx}
 
+# Logging helper — prefixes every message with ISO timestamp and [rtsp-streamer]
+log() {
+  echo "$(date '+%Y-%m-%d %H:%M:%S.%3N') [rtsp-streamer] $*"
+}
+
 # Loop configuration
 # LOOP_COUNT: number of times to play the video (default -1 = infinite)
 #   -1 = infinite loop
@@ -18,37 +23,41 @@ LOOP_COUNT=${LOOP_COUNT:--1}
 BLANK_DURATION=${BLANK_DURATION:-0}
 
 if [ ! -d "$MEDIA_DIR" ]; then
-  echo "Media directory $MEDIA_DIR does not exist" >&2
+  log "ERROR Media directory $MEDIA_DIR does not exist" >&2
   exit 1
 fi
 
 if [ ! -x "$MEDIAMTX_BIN" ]; then
-  echo "mediamtx binary $MEDIAMTX_BIN not found or not executable" >&2
+  log "ERROR mediamtx binary $MEDIAMTX_BIN not found or not executable" >&2
   exit 1
 fi
 
 set -- "$MEDIA_DIR"/*.mp4
 if [ ! -e "$1" ]; then
-  echo "No .mp4 files found in $MEDIA_DIR" >&2
+  log "ERROR No .mp4 files found in $MEDIA_DIR" >&2
   exit 1
 fi
 
+log "Starting mediamtx RTSP server on port $RTSP_PORT ..."
 "$MEDIAMTX_BIN" >/tmp/mediamtx.log 2>&1 &
 mediamtx_pid=$!
 pids="$mediamtx_pid"
+log "mediamtx started (PID=$mediamtx_pid)"
 
 # Wait for RTSP server to accept connections
+log "Waiting for mediamtx to accept connections on port $RTSP_PORT ..."
 retry=50
 while ! nc -z 127.0.0.1 "$RTSP_PORT" >/dev/null 2>&1; do
   retry=$((retry - 1))
   if [ "$retry" -le 0 ]; then
-    echo "RTSP server failed to start on port $RTSP_PORT" >&2
+    log "ERROR RTSP server failed to start on port $RTSP_PORT" >&2
     kill "$mediamtx_pid"
     wait "$mediamtx_pid" 2>/dev/null || true
     exit 1
   fi
   sleep 0.2
 done
+log "mediamtx is ready and accepting connections on port $RTSP_PORT"
 
 # Function to generate black video with same properties as source
 generate_black_video() {
@@ -64,7 +73,7 @@ generate_black_video() {
   resolution=${resolution:-1920x1080}
   fps=${fps:-30}
   
-  echo "Generating ${duration}s black video at ${resolution} @ ${fps}fps"
+  log "Generating ${duration}s black video at ${resolution} @ ${fps}fps"
   
   "$FFMPEG_BIN" -hide_banner -loglevel error \
     -f lavfi -i "color=c=black:s=${resolution}:r=${fps}:d=${duration}" \
@@ -100,7 +109,7 @@ create_looped_video() {
     i=$((i + 1))
   done
   
-  echo "Concat list:"
+  log "Concat list:"
   cat "$concat_list"
   
   # Create concatenated video
@@ -115,13 +124,18 @@ create_looped_video() {
   rmdir "$tmpdir" 2>/dev/null || true
 }
 
+# Map stream_name → station for logging
+station_index=0
+
 pids="$pids"
 for file in "$@"; do
   [ -f "$file" ] || continue
   filename=$(basename "$file")
   stream_name=${filename%.*}
+  station_index=$((station_index + 1))
+  station_label="station_${station_index}"
   
-  echo "Starting RTSP stream $stream_name from $file (loop_count=$LOOP_COUNT, blank_duration=${BLANK_DURATION}s)"
+  log "[${station_label}] Preparing RTSP stream '${stream_name}' from $file (loop_count=$LOOP_COUNT, blank_duration=${BLANK_DURATION}s)"
   
   # Determine streaming mode
   if [ "$LOOP_COUNT" -eq -1 ]; then
@@ -137,7 +151,7 @@ for file in "$@"; do
     if [ "$BLANK_DURATION" -gt 0 ]; then
       # Create concatenated video with blank frames
       looped_file="/tmp/${stream_name}_looped.mp4"
-      echo "Creating looped video with ${BLANK_DURATION}s blank frames between ${LOOP_COUNT} loops..."
+      log "[${station_label}] Creating looped video with ${BLANK_DURATION}s blank frames between ${LOOP_COUNT} loops..."
       create_looped_video "$file" "$looped_file" "$LOOP_COUNT" "$BLANK_DURATION"
       stream_loop_arg="0"  # Play the concatenated file once
       input_file="$looped_file"
@@ -152,6 +166,9 @@ for file in "$@"; do
   # -stream_loop controls looping behavior
   # -c copy copies audio/video streams without re-encoding
   # -f rtsp publishes to MediaMTX via RTSP protocol
+  log "[${station_label}] Starting ffmpeg for stream '${stream_name}' → rtsp://127.0.0.1:${RTSP_PORT}/${stream_name} (PID will follow)"
+  log "[${station_label}]   input_file=$input_file  stream_loop=$stream_loop_arg"
+  
   "$FFMPEG_BIN" \
     -hide_banner \
     -loglevel info \
@@ -164,16 +181,21 @@ for file in "$@"; do
     "rtsp://127.0.0.1:${RTSP_PORT}/${stream_name}" &
   pid=$!
   pids="$pids $pid"
+  log "[${station_label}] ffmpeg started for stream '${stream_name}' (PID=$pid, RTSP=rtsp://0.0.0.0:${RTSP_PORT}/${stream_name})"
   sleep 0.2
 done
 
+log "All streams started. Total streams: $station_index"
+
 cleanup() {
-  echo "Stopping RTSP streams"
+  log "Shutdown signal received — stopping all RTSP streams ..."
   for pid in $pids; do
     if kill -0 "$pid" 2>/dev/null; then
+      log "Sending SIGTERM to PID=$pid"
       kill "$pid"
     fi
   done
+  log "Cleanup complete"
 }
 
 trap 'cleanup' INT TERM

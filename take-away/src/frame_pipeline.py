@@ -1185,6 +1185,64 @@ atexit.register(_pipeline_atexit_handler)
 log(f"[INIT] [{ts()}] Registered pipeline shutdown atexit handler")
 
 # ==========================================================
+# SIGNAL HANDLER — flush last active order on SIGABRT/SIGTERM
+# ==========================================================
+# When gst-launch-1.0 exits after a video file ends, the process often
+# receives SIGABRT (exit code 134) from OpenCV TLS teardown.  Python's
+# atexit handlers do NOT run when the process is killed by a signal.
+#
+# This signal handler ensures the final order's __EOS__ marker is written
+# to MinIO even on abnormal termination, so the frame-selector / station
+# worker can detect the completed order.
+# ==========================================================
+
+import signal as _signal
+
+_shutdown_handler_called = False
+
+def _pipeline_signal_handler(signum, frame):
+    """Flush pending orders on SIGTERM/SIGABRT before the process dies."""
+    global _shutdown_handler_called
+    if _shutdown_handler_called:
+        return  # Prevent double-execution if both signal + atexit fire
+    _shutdown_handler_called = True
+
+    sig_name = _signal.Signals(signum).name if hasattr(_signal, 'Signals') else str(signum)
+    log(f"[SIGNAL] [{ts()}] Received {sig_name} — flushing active order before exit")
+    try:
+        _pipeline_atexit_handler()
+    except Exception as e:
+        log(f"[SIGNAL] [{ts()}] Error during signal shutdown: {e}")
+
+    # Re-raise the signal with default handler to get correct exit code
+    _signal.signal(signum, _signal.SIG_DFL)
+    os.kill(os.getpid(), signum)
+
+# Wrap atexit handler to skip if signal handler already ran
+_original_atexit_handler = _pipeline_atexit_handler
+
+def _guarded_atexit_handler():
+    if not _shutdown_handler_called:
+        _original_atexit_handler()
+
+# Re-register guarded version
+atexit.unregister(_pipeline_atexit_handler)
+atexit.register(_guarded_atexit_handler)
+
+# Register signal handlers
+try:
+    _signal.signal(_signal.SIGTERM, _pipeline_signal_handler)
+    log(f"[INIT] [{ts()}] Registered SIGTERM signal handler")
+except Exception as e:
+    log(f"[INIT] [{ts()}] Could not register SIGTERM handler: {e}")
+
+try:
+    _signal.signal(_signal.SIGABRT, _pipeline_signal_handler)
+    log(f"[INIT] [{ts()}] Registered SIGABRT signal handler")
+except Exception as e:
+    log(f"[INIT] [{ts()}] Could not register SIGABRT handler: {e}")
+
+# ==========================================================
 # MODULE INITIALIZATION - OCR WARMUP
 # ==========================================================
 # Run OCR warmup at module load time (BEFORE any frames arrive).
