@@ -60,7 +60,7 @@ The `images/` folder does not contain sample images. Add your own before testing
 make build && make up
 
 # OR build locally from source
-make up REGISTRY=false
+make build REGISTRY=false && make up
 ```
 
 This starts 4 containers:
